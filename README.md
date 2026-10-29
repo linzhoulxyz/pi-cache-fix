@@ -26,7 +26,11 @@ Pi -> before_provider_headers -> add session-id -> Responses endpoint
 pi install git:github.com/linzhoulxyz/pi-cache-fix
 ```
 
-然后指定需要修复的实际 API 站点。Windows PowerShell 示例：
+然后按实际连接方式设置白名单。**直连供应商时填写供应商 origin；经过 Magpie 时填写 Magpie 的本机 origin，而不是它背后的供应商域名。** 扩展不会自动创建 provider 或切换模型。
+
+### 直连供应商
+
+先在 Pi 中配置对应供应商的 `openai-responses` provider。Windows PowerShell 示例：
 
 ```powershell
 $origins = "https://www.wgpt123123.xyz"
@@ -37,7 +41,7 @@ pi
 
 第一条设置让以后新启动的进程可用，第二条设置让当前 PowerShell 立即可用。如果从另一个已经打开的终端或桌面客户端启动 Pi，需要重启那个父进程，使其读取新环境变量。
 
-进入 Pi 后输入：
+进入 Pi 后，先用 `/model` 选择该直连 provider 下的模型，再输入：
 
 ```text
 /cache-fix
@@ -53,6 +57,53 @@ pi
 ```
 
 环境变量不包含密钥，可以在两台 PC 上复用。供应商认证仍由每台 PC 的 Pi provider 配置管理，不要把认证文件上传到这个仓库。
+
+### 经过 Magpie 本地网关
+
+前提：Pi 已配置指向 Magpie 的 `openai-responses` provider。下面以 provider 名称 `magpie-responses`、Magpie 地址 `http://127.0.0.1:3425` 为例；名称可以自定义，地址和端口以本机配置为准。
+
+在 PowerShell 中保留直连站点，并加入 Magpie 的 origin，然后启动 Pi：
+
+```powershell
+$origins = "https://www.wgpt123123.xyz,http://127.0.0.1:3425"
+[Environment]::SetEnvironmentVariable("PI_CACHE_FIX_ORIGINS", $origins, "User")
+$env:PI_CACHE_FIX_ORIGINS = $origins
+pi
+```
+
+进入新启动的 Pi 后：
+
+1. 输入 `/model`，选择 `magpie-responses` 下的目标模型，例如 `wgpt123123/gpt-6.1-sol`。模型需要已在本机 Pi 和 Magpie 中配置。
+2. 不要选择使用 `openai-completions` 的 provider；只加入本机地址不能让 Chat Completions 生效。
+3. 输入 `/cache-fix`，预期显示：
+
+```text
+pi-cache-fix: active for http://127.0.0.1:3425 (openai-responses). Existing session-id headers are preserved.
+```
+
+安装另一台 PC 时重复安装、白名单设置和模型选择步骤。即使 provider 名称相同，也要检查实际 `api`、`baseUrl` 和端口，不能只看模型名称。
+
+**这只确认插件启用。Magpie 是否透传请求头、上游是否命中缓存，仍需通过实际响应中的 `usage.input_tokens_details.cached_tokens` 验证。** 本项目已有的原始缓存命中证据来自 WGPT 直连 Responses，不能自动视为 Magpie 链路的验证结果。
+
+## 排查 inactive / disabled
+
+如果 `/cache-fix` 显示：
+
+```text
+pi-cache-fix: inactive for this model. Select openai-responses on an allowed origin.
+```
+
+说明扩展已加载且白名单非空，但当前模型没有同时满足 API 类型和 origin 匹配条件：
+
+| 检查项 | 要求 | 常见不匹配 |
+| --- | --- | --- |
+| 当前模型的 `api` | `openai-responses` | 选择了 `openai-completions` provider |
+| 当前模型的 `baseUrl` origin | 在 `PI_CACHE_FIX_ORIGINS` 中 | 经过 Magpie，却只允许了上游供应商域名 |
+| 协议、主机、端口 | 与实际请求地址一致 | `localhost` 和 `127.0.0.1` 不同，或网关端口不同 |
+
+先用 `/model` 检查当前会话选中的 provider/model，不要只看默认模型。修改环境变量后需要重启 Pi；如果从旧终端或桌面客户端启动，还要更新当前终端环境或重启父进程。
+
+如果显示 `disabled. Set PI_CACHE_FIX_ORIGINS and restart Pi.`，说明该 Pi 进程没有读到非空白名单。用户级环境变量已保存，不代表已经运行的进程会自动获得它。
 
 ## 配置规则
 
@@ -116,6 +167,8 @@ Remove-Item Env:PI_CACHE_FIX_ORIGINS -ErrorAction SilentlyContinue
 | 完整 Pi CLI 加 session-id，含一次真实 read 工具调用 | 0, 15104, 15232 |
 
 这是对修复机制的短程实测，不是对所有站点、所有模型或长期稳定性的保证。没有确认是哪个服务端组件导致了差异，也没有证明必定存在 Nginx 丢头。泛化后的包通过离线测试和本地假服务验证，不额外消耗供应商请求。
+
+Magpie 配置步骤在补充本机 origin 并选择 Responses provider 后，已获用户可用反馈；未新增可独立核对的 Magpie 原始缓存 usage，因此不将该反馈计入上表的定量测试结果。
 
 首条冷请求为零、缓存过期、服务端路由变化、上下文压缩或前缀变化，都可能使读取为零；不要把单次零缓存直接判断为插件故障。
 

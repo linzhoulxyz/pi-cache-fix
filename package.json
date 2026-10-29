@@ -28,8 +28,9 @@
     ]
   },
   "scripts": {
-    "check": "node --check extensions/session-id.mjs && node --check tools/pi-smoke.mjs",
+    "check": "node --check extensions/session-id.mjs && node --check tools/pi-smoke.mjs && node --check tools/magpie-smoke.mjs",
     "test": "node --test test/*.test.mjs",
-    "test:pi": "node tools/pi-smoke.mjs"
+    "test:pi": "node tools/pi-smoke.mjs",
+    "test:magpie": "node tools/magpie-smoke.mjs"
   }
 }

@@ -12,7 +12,7 @@
 Pi -> before_provider_headers -> add session-id -> Responses endpoint
 ```
 
-扩展只添加一个缺失的请求头，保留原来的 `session_id`。已有的 `session-id`（不区分大小写，包括显式删除值）不会被覆盖。切换会话后使用新的会话 ID。
+默认只添加缺失的 `session-id`，保留原来的 `session_id`。已有的 `session-id`（不区分大小写，包括显式删除值）不会被覆盖。切换会话后使用新的会话 ID。本机 Magpie 可额外显式启用下述 Codex 请求头兼容模式。
 
 **这不是本地答案缓存、缓存用量修改器或独立代理服务器，不能保证所有供应商都会命中缓存。**
 
@@ -68,6 +68,9 @@ pi
 $origins = "https://www.wgpt123123.xyz,http://127.0.0.1:3425"
 [Environment]::SetEnvironmentVariable("PI_CACHE_FIX_ORIGINS", $origins, "User")
 $env:PI_CACHE_FIX_ORIGINS = $origins
+$magpieOrigins = "http://127.0.0.1:3425"
+[Environment]::SetEnvironmentVariable("PI_CACHE_FIX_MAGPIE_ORIGINS", $magpieOrigins, "User")
+$env:PI_CACHE_FIX_MAGPIE_ORIGINS = $magpieOrigins
 pi
 ```
 
@@ -78,12 +81,22 @@ pi
 3. 输入 `/cache-fix`，预期显示：
 
 ```text
-pi-cache-fix: active for http://127.0.0.1:3425 (openai-responses). Existing session-id headers are preserved.
+pi-cache-fix: active for http://127.0.0.1:3425 (openai-responses). Existing session-id headers are preserved. Magpie compatibility configured: originator=codex_cli_rs; Pi User-Agent kept; existing originator preserved. This is not a cache-hit check.
 ```
 
 安装另一台 PC 时重复安装、白名单设置和模型选择步骤。即使 provider 名称相同，也要检查实际 `api`、`baseUrl` 和端口，不能只看模型名称。
 
 **这只确认插件启用。Magpie 是否透传请求头、上游是否命中缓存，仍需通过实际响应中的 `usage.input_tokens_details.cached_tokens` 验证。** 本项目已有的原始缓存命中证据来自 WGPT 直连 Responses，不能自动视为 Magpie 链路的验证结果。
+
+### 为什么 Magpie 还需要一个开关
+
+Magpie 0.1.1997 的普通密钥 Responses 转发路径会丢弃 Pi 的 `session-id` 和 `session_id`，正文 `prompt_cache_key` 则保留。其 `fromCodex` 判断接受 `Originator` 或 `User-Agent` 中的 Codex 标记，Codex 分支才转发这两个头。2026-10-29 检查的 v0.1.2069 同一路径仍有此条件，单纯升级不等于修复。
+
+`PI_CACHE_FIX_MAGPIE_ORIGINS` 让插件只在指定本机网关上补充 `originator: codex_cli_rs`，使 Magpie 选择这条兼容分支；Pi 原本的 User-Agent、认证、模型及正文均由 Pi 保持。它没有把 Pi 切换成 `openai-codex-responses`，也不添加 Codex 认证或功能开关。已有的 `Originator`（不区分大小写，包括空值和显式删除）会保留；用户自定义标记因此可能阻止兼容分支生效。
+
+这仍是一种显式兼容办法：Magpie 会按 Codex 标记处理部分逻辑，且该标记会被透传到上游。仅使用普通密钥的 Responses 转发已完成本机回归，不能推广到订阅账号、协议转换或所有工具行为。目标模型应使用完整的 Magpie 模型 ID（例如 `wgpt123123/gpt-6.1-terra`）。Magpie 或供应商以后改变判定规则时需要复查；上游最终是否缓存仍取决于供应商。
+
+此开关只接受 `localhost`、`127.0.0.1` 或 `[::1]` 的 HTTP(S) origin，而且必须同时列于 `PI_CACHE_FIX_ORIGINS`。不会自动对直连 WGPT 或其他远程站点添加 Codex 标记。
 
 ## 排查 inactive / disabled
 
@@ -107,7 +120,7 @@ pi-cache-fix: inactive for this model. Select openai-responses on an allowed ori
 
 ## 配置规则
 
-只有一个配置项：`PI_CACHE_FIX_ORIGINS`，多个 origin 用逗号分隔：
+基础配置项是 `PI_CACHE_FIX_ORIGINS`，多个 origin 用逗号分隔：
 
 ```text
 https://api.example.com,https://another.example.com,http://127.0.0.1:3425
@@ -121,6 +134,8 @@ https://api.example.com,https://another.example.com,http://127.0.0.1:3425
 - 修改配置后重启 Pi。插件不会新增 provider、切换模型或把 Chat Completions 转换为 Responses。
 
 如果使用本地网关，应配置网关的 origin，而不是其背后的供应商站点。**允许添加请求头不等于网关一定会透传它；本项目尚未完成 Magpie 路径的真实缓存回归。**
+
+可选的 `PI_CACHE_FIX_MAGPIE_ORIGINS` 使用同样的逗号分隔格式，额外要求本机回环地址且已在基础白名单中。未设置时完全保留原来的只补 `session-id` 行为。
 
 ## 为什么不绑定某个供应商
 
@@ -151,9 +166,13 @@ pi
 pi remove git:github.com/linzhoulxyz/pi-cache-fix
 [Environment]::SetEnvironmentVariable("PI_CACHE_FIX_ORIGINS", $null, "User")
 Remove-Item Env:PI_CACHE_FIX_ORIGINS -ErrorAction SilentlyContinue
+[Environment]::SetEnvironmentVariable("PI_CACHE_FIX_MAGPIE_ORIGINS", $null, "User")
+Remove-Item Env:PI_CACHE_FIX_MAGPIE_ORIGINS -ErrorAction SilentlyContinue
 ```
 
 重启 Pi 后生效；provider 配置和会话数据不需要删除。
+
+只停用 Magpie 兼容模式时，清除用户级及当前进程的 `PI_CACHE_FIX_MAGPIE_ORIGINS` 后重启 Pi；基础白名单及原有 `session-id` 功能可继续保留。
 
 ## 验证情况与限制
 
@@ -171,6 +190,8 @@ Remove-Item Env:PI_CACHE_FIX_ORIGINS -ErrorAction SilentlyContinue
 Magpie 配置步骤在补充本机 origin 并选择 Responses provider 后，已获用户可用反馈；未新增可独立核对的 Magpie 原始缓存 usage，因此不将该反馈计入上表的定量测试结果。
 
 首条冷请求为零、缓存过期、服务端路由变化、上下文压缩或前缀变化，都可能使读取为零；不要把单次零缓存直接判断为插件故障。
+
+新增的 Magpie 离线回归使用已安装的 Pi 1.3.0 和 Magpie 0.1.1997，经过实际网关连接回环假服务。旧插件在首轮即因会话头丢失而失败；兼容模式通过同一会话 9 轮和新会话 3 轮检查：`session-id == session_id == prompt_cache_key`，历史输入前缀稳定，新会话更换缓存身份，User-Agent 仍为 Pi。假服务不执行模型，usage 中的 cached_tokens 固定为 0；此测试不证明真实缓存命中或长期稳定性，且隔离配置关闭了脱敏，未验证本机脱敏模型对前缀的影响。
 
 ## 开发验证
 
@@ -196,5 +217,14 @@ npm run test:pi
 ```powershell
 npm run test:pi -- git:github.com/linzhoulxyz/pi-cache-fix
 ```
+
+多轮 Magpie 路径验证同样使用隔离配置和假上游，既不读取日常认证，也不接触真实模型。它不会安装或更新 Magpie：
+
+```powershell
+$env:PI_CACHE_FIX_MAGPIE_EXE = "$env:LOCALAPPDATA\Programs\Magpie\magpie.exe"
+npm run test:magpie
+```
+
+仍需先设置上面的 `PI_CACHE_FIX_PI_CLI`。可传入另一份本地插件目录验证旧版，例如 `npm run test:magpie -- C:\path\to\old-package`；不支持远程安装源。
 
 仓库只作为 Git 分发包，暂未发布 npm 包或选择开源许可证。

@@ -4,10 +4,16 @@ import cacheFix, { ORIGINS_ENV, addSessionHeader, parseOrigins, targetOrigin } f
 
 const model = { api: 'openai-responses', baseUrl: 'https://api.example.com/v1' };
 
-function load(value) {
+const MAGPIE_ENV = 'PI_CACHE_FIX_MAGPIE_ORIGINS';
+const magpieModel = { ...model, baseUrl: 'http://127.0.0.1:3425/v1' };
+
+function load(value, magpieValue) {
   const before = process.env[ORIGINS_ENV];
+  const magpieBefore = process.env[MAGPIE_ENV];
   if (value === undefined) delete process.env[ORIGINS_ENV];
   else process.env[ORIGINS_ENV] = value;
+  if (magpieValue === undefined) delete process.env[MAGPIE_ENV];
+  else process.env[MAGPIE_ENV] = magpieValue;
   const handlers = new Map();
   const commands = new Map();
   try {
@@ -16,6 +22,8 @@ function load(value) {
   } finally {
     if (before === undefined) delete process.env[ORIGINS_ENV];
     else process.env[ORIGINS_ENV] = before;
+    if (magpieBefore === undefined) delete process.env[MAGPIE_ENV];
+    else process.env[MAGPIE_ENV] = magpieBefore;
   }
   return { request: handlers.get('before_provider_headers'), status: commands.get('cache-fix').handler };
 }
@@ -109,4 +117,66 @@ test('status command covers disabled, active and non-target models without a pro
   assert.match(messages[0], /disabled/);
   assert.match(messages[1], /active for https:\/\/api\.example\.com/);
   assert.match(messages[2], /inactive/);
+});
+
+test('Magpie compatibility is opt-in and keeps the real Pi user-agent', () => {
+  const ctx = { model: magpieModel, sessionManager: { getSessionId: () => 'same-session' } };
+  const plain = { headers: { 'User-Agent': 'pi (win32; x64)' } };
+  load('http://127.0.0.1:3425').request(plain, ctx);
+  assert.equal(plain.headers.originator, undefined);
+  const bridged = { headers: { 'User-Agent': 'pi (win32; x64)', session_id: 'same-session' } };
+  load('http://127.0.0.1:3425', 'http://127.0.0.1:3425').request(bridged, ctx);
+  assert.equal(bridged.headers.originator, 'codex_cli_rs');
+  assert.equal(bridged.headers['User-Agent'], 'pi (win32; x64)');
+  assert.equal(bridged.headers['session-id'], bridged.headers.session_id);
+});
+
+test('Magpie compatibility still runs when session-id already exists', () => {
+  const { request } = load('http://127.0.0.1:3425', 'http://127.0.0.1:3425');
+  const event = { headers: { 'Session-Id': 'kept-session' } };
+  request(event, { model: magpieModel, sessionManager: { getSessionId: () => { throw new Error('Must not override'); } } });
+  assert.equal(event.headers.originator, 'codex_cli_rs');
+  assert.equal(event.headers['Session-Id'], 'kept-session');
+});
+
+test('existing originator values and explicit deletions are preserved', () => {
+  const { request } = load('http://127.0.0.1:3425', 'http://127.0.0.1:3425');
+  for (const name of ['originator', 'Originator', 'ORIGINATOR']) {
+    for (const value of ['own-client', '', null]) {
+      const event = { headers: { [name]: value } };
+      request(event, { model: magpieModel, sessionManager: { getSessionId: () => 'same-session' } });
+      assert.deepEqual(event.headers, { [name]: value, 'session-id': 'same-session' });
+    }
+  }
+});
+
+test('Magpie compatibility never tags direct sites, another port or other APIs', () => {
+  const { request } = load('https://api.example.com,http://127.0.0.1:3425', 'http://127.0.0.1:3425');
+  for (const current of [model, { ...magpieModel, baseUrl: 'http://127.0.0.1:3426/v1' },
+    { ...magpieModel, api: 'openai-completions' }, { ...magpieModel, api: 'openai-codex-responses' }]) {
+    const event = { headers: {} };
+    request(event, { model: current, sessionManager: { getSessionId: () => 'session' } });
+    assert.equal(event.headers.originator, undefined);
+  }
+});
+
+test('Magpie configuration requires an already allowed loopback origin', () => {
+  for (const value of ['https://api.example.com', 'http://192.0.2.10:3425', 'http://127.0.0.1:3426']) {
+    assert.throws(() => load('http://127.0.0.1:3425,https://api.example.com', value),
+      error => error.message.includes(MAGPIE_ENV));
+  }
+  for (const origin of ['http://localhost:3425', 'http://[::1]:3425']) {
+    const { request } = load(origin, origin);
+    const event = { headers: {} };
+    request(event, { model: { ...model, baseUrl: `${origin}/v1` }, sessionManager: { getSessionId: () => 'session' } });
+    assert.equal(event.headers.originator, 'codex_cli_rs');
+  }
+});
+
+test('status distinguishes Magpie compatibility configuration from cache hits', async () => {
+  const messages = [];
+  await load('http://127.0.0.1:3425', 'http://127.0.0.1:3425').status('',
+    { model: magpieModel, ui: { notify: message => messages.push(message) } });
+  assert.match(messages[0], /Magpie.*originator/i);
+  assert.match(messages[0], /not a cache.hit/i);
 });

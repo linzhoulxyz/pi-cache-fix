@@ -1,0 +1,35 @@
+{
+  "name": "pi-cache-fix",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Opt-in session-id header compatibility for Pi OpenAI Responses providers.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/linzhoulxyz/pi-cache-fix.git"
+  },
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "prompt-cache",
+    "openai-responses"
+  ],
+  "files": [
+    "extensions/",
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/session-id.mjs"
+    ]
+  },
+  "scripts": {
+    "check": "node --check extensions/session-id.mjs && node --check tools/pi-smoke.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:pi": "node tools/pi-smoke.mjs"
+  }
+}

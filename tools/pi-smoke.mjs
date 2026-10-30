@@ -58,7 +58,8 @@ const server = createServer(async (request, response) => {
 await new Promise(done => server.listen(0, '127.0.0.1', done));
 const origin = `http://127.0.0.1:${server.address().port}`;
 const env = { ...process.env, PI_CODING_AGENT_DIR: directory, PI_OFFLINE: '1', PI_TELEMETRY: '0',
-  PI_CACHE_FIX_ORIGINS: origin, NO_PROXY: '127.0.0.1,localhost', HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '',
+  PI_CACHE_FIX_ORIGINS: origin, PI_CACHE_FIX_MAGPIE_ORIGINS: '',
+  NO_PROXY: '127.0.0.1,localhost', HTTP_PROXY: '', HTTPS_PROXY: '', ALL_PROXY: '',
   http_proxy: '', https_proxy: '', all_proxy: '' };
 const settingsPath = join(directory, 'settings.json');
 writeFileSync(settingsPath, JSON.stringify({ packages: [], extensions: [], retry: { enabled: false, provider: { maxRetries: 0 } },
